@@ -292,3 +292,10 @@ input,textarea,select{font:inherit}
 .bk-a i svg{width:24px;height:24px;fill:none;stroke:#fff;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .bk-actions{display:grid!important;grid-template-columns:repeat(4,1fr);gap:16px 6px;padding:18px 14px 6px!important;justify-items:center}
 .bk-a{text-align:center}
+
+/* ---- laptop / desktop (MacBook, PC): show the prop as a phone-sized screen, centred ---- */
+@media (min-width: 700px) {
+  body:has(#stage:not([hidden])) { background: #0b0d10; }
+  #stage { left: 50%; right: auto; width: min(430px, calc(var(--app-h, 100vh) * 0.4615)); transform: translateX(-50%); box-shadow: 0 0 0 1px #222, 0 30px 80px rgba(0,0,0,.6); }
+  #director { padding-top: 10px; }
+}
