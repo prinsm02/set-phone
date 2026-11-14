@@ -1,0 +1,133 @@
+{
+ "items": [
+  {
+   "id": "gen-av1",
+   "group": "General",
+   "kind": "avatar",
+   "name": "Sipho",
+   "file": "general/avatar-01.jpg"
+  },
+  {
+   "id": "gen-av2",
+   "group": "General",
+   "kind": "avatar",
+   "name": "Naledi",
+   "file": "general/avatar-02.jpg"
+  },
+  {
+   "id": "gen-av3",
+   "group": "General",
+   "kind": "avatar",
+   "name": "Uncle Faiek",
+   "file": "general/avatar-03.jpg"
+  },
+  {
+   "id": "gen-av4",
+   "group": "General",
+   "kind": "avatar",
+   "name": "Priya",
+   "file": "general/avatar-04.jpg"
+  },
+  {
+   "id": "gen-av5",
+   "group": "General",
+   "kind": "avatar",
+   "name": "Kyle",
+   "file": "general/avatar-05.jpg"
+  },
+  {
+   "id": "gen-av6",
+   "group": "General",
+   "kind": "avatar",
+   "name": "Gogo",
+   "file": "general/avatar-06.jpg"
+  },
+  {
+   "id": "gen-av7",
+   "group": "General",
+   "kind": "avatar",
+   "name": "Pieter",
+   "file": "general/avatar-07.jpg"
+  },
+  {
+   "id": "gen-av8",
+   "group": "General",
+   "kind": "avatar",
+   "name": "Lerato",
+   "file": "general/avatar-08.jpg"
+  },
+  {
+   "id": "gen-av9",
+   "group": "General",
+   "kind": "avatar",
+   "name": "Mr Naidoo",
+   "file": "general/avatar-09.jpg"
+  },
+  {
+   "id": "gen-wp1",
+   "group": "General",
+   "kind": "wallpaper",
+   "name": "Warm Blobs",
+   "file": "general/wallpaper-01.jpg"
+  },
+  {
+   "id": "gen-wp2",
+   "group": "General",
+   "kind": "wallpaper",
+   "name": "Blue Waves",
+   "file": "general/wallpaper-02.jpg"
+  },
+  {
+   "id": "gen-wp3",
+   "group": "General",
+   "kind": "wallpaper",
+   "name": "Table Mountain",
+   "file": "general/wallpaper-03.jpg"
+  },
+  {
+   "id": "gen-wp4",
+   "group": "General",
+   "kind": "wallpaper",
+   "name": "Joburg Dusk",
+   "file": "general/wallpaper-04.jpg"
+  },
+  {
+   "id": "gen-wp5",
+   "group": "General",
+   "kind": "wallpaper",
+   "name": "Dark Gradient",
+   "file": "general/wallpaper-05.jpg"
+  },
+  {
+   "id": "gen-wp6",
+   "group": "General",
+   "kind": "wallpaper",
+   "name": "Dog on Couch",
+   "file": "general/wallpaper-06.jpg"
+  },
+  {
+   "id": "gen-cb1",
+   "group": "General",
+   "kind": "chatbg",
+   "name": "Doodles light",
+   "file": "general/chatbg-01.jpg"
+  },
+  {
+   "id": "gen-cb2",
+   "group": "General",
+   "kind": "chatbg",
+   "name": "Doodles dark",
+   "file": "general/chatbg-02.jpg"
+  }
+ ],
+ "ui": [
+  "ui/bank-pay.png",
+  "ui/bank-transfer.png",
+  "ui/bank-buy.png",
+  "ui/bank-statements.png",
+  "ui/bank-cards.png",
+  "ui/bank-scan.png",
+  "ui/bank-airtime.png",
+  "ui/bank-settings.png"
+ ]
+}
