@@ -1,6 +1,7 @@
 // Public build: demo scene only. Production scenes are imported on the phone from a scene file.
 window.PRESETS = [
  {
+  "group": "Demo",
   "name": "Demo - every chat feature",
   "order": 9,
   "note": "Test scene: typing, ticks, voice note, photo, actor-typed reply, app call. Delete or copy as you like.",

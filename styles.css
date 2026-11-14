@@ -264,3 +264,31 @@ input,textarea,select{font:inherit}
 .h-dots i.on{background:#fff}
 .h-search{display:none}
 .h-dock{margin:0 10px 12px;border-radius:30px;padding:16px 10px}
+.m-voice.in .v-len{left:97px}.m-voice.out .v-len{left:45px}
+
+/* ---- v3: productions, library, bank icons ---- */
+.prod-bar{display:flex;gap:8px;align-items:center;margin:4px 0 2px;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
+.chip{background:#e5e5ea;border-radius:18px;padding:7px 12px;font-size:14px;font-weight:600;white-space:nowrap}
+.chip.on{background:#111;color:#fff}
+.chip.add{background:#fff;border:1.5px dashed #c7c7cc;color:#007aff}
+.chip.small{font-size:12px;padding:5px 10px}
+.scene-row{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 0;border-top:1px solid #eee}
+.scene-row:first-of-type{border-top:0}
+.scene-main{flex:1;min-width:0;cursor:pointer}
+.scene-main .t{font-weight:600}
+.thumb.tall{width:40px;height:72px}
+.sheet{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:200;display:flex;align-items:flex-end;justify-content:center}
+.sheet-box{background:#f2f2f7;width:100%;max-width:640px;max-height:86vh;overflow-y:auto;border-radius:16px 16px 0 0;padding:14px 14px calc(18px + env(safe-area-inset-bottom));animation:up .25s ease-out}
+@keyframes up{from{transform:translateY(40px);opacity:0}to{transform:none;opacity:1}}
+.sheet-head{display:flex;justify-content:space-between;align-items:center;font-size:17px;margin-bottom:4px}
+.lib-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:6px}
+.lib-grid.tall{grid-template-columns:repeat(3,1fr)}
+.lib-cell{display:flex;flex-direction:column;gap:3px;font-size:11px;color:#3a3a3c;text-align:center;cursor:pointer}
+.lib-cell img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:12px;background:#ddd}
+.lib-grid.tall .lib-cell img{aspect-ratio:9/19.5}
+.bk-a i{display:flex;align-items:center;justify-content:center;background:#0b3d5c!important}
+.bk-a i img{width:100%;height:100%;object-fit:cover;border-radius:14px}
+.bk-a i svg{width:24px;height:24px;fill:none;stroke:#fff;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.bk-actions{display:grid!important;grid-template-columns:repeat(4,1fr);gap:16px 6px;padding:18px 14px 6px!important;justify-items:center}
+.bk-a{text-align:center}

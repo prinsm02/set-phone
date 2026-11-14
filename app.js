@@ -9,32 +9,50 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 const STANDALONE = !!(navigator.standalone || (window.matchMedia && matchMedia('(display-mode: standalone)').matches));
 
 /* ================= STORAGE ================= */
+// Two stores: 'scenes' (each scene has a .group = production name) and 'library' (images: {id, group, kind, name, data}).
 const DB = {
-  db: null, mem: new Map(),
+  db: null, mem: { scenes: new Map(), library: new Map() },
   open() {
     return new Promise(res => {
       try {
-        const r = indexedDB.open('setphone', 1);
-        r.onupgradeneeded = () => r.result.createObjectStore('scenes', { keyPath: 'id' });
+        const r = indexedDB.open('setphone', 2);
+        r.onupgradeneeded = () => {
+          const db = r.result;
+          if (!db.objectStoreNames.contains('scenes')) db.createObjectStore('scenes', { keyPath: 'id' });
+          if (!db.objectStoreNames.contains('library')) db.createObjectStore('library', { keyPath: 'id' });
+        };
         r.onsuccess = () => { this.db = r.result; res(); };
         r.onerror = () => res();
       } catch (e) { res(); }
     });
   },
-  store(mode) { return this.db.transaction('scenes', mode).objectStore('scenes'); },
-  all() {
-    if (!this.db) return Promise.resolve([...this.mem.values()]);
-    return new Promise(res => { const r = this.store('readonly').getAll(); r.onsuccess = () => res(r.result); r.onerror = () => res([]); });
+  store(name, mode) { return this.db.transaction(name, mode).objectStore(name); },
+  all(name = 'scenes') {
+    if (!this.db) return Promise.resolve([...this.mem[name].values()]);
+    return new Promise(res => { const r = this.store(name, 'readonly').getAll(); r.onsuccess = () => res(r.result); r.onerror = () => res([]); });
   },
-  put(s) {
-    if (!this.db) { this.mem.set(s.id, s); return Promise.resolve(); }
-    return new Promise(res => { const r = this.store('readwrite').put(s); r.onsuccess = r.onerror = () => res(); });
+  put(s, name = 'scenes') {
+    if (!this.db) { this.mem[name].set(s.id, s); return Promise.resolve(); }
+    return new Promise(res => { const r = this.store(name, 'readwrite').put(s); r.onsuccess = r.onerror = () => res(); });
   },
-  del(id) {
-    if (!this.db) { this.mem.delete(id); return Promise.resolve(); }
-    return new Promise(res => { const r = this.store('readwrite').delete(id); r.onsuccess = r.onerror = () => res(); });
+  del(id, name = 'scenes') {
+    if (!this.db) { this.mem[name].delete(id); return Promise.resolve(); }
+    return new Promise(res => { const r = this.store(name, 'readwrite').delete(id); r.onsuccess = r.onerror = () => res(); });
   }
 };
+const groupOf = s => s.group || 'My scenes';
+const LS = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch (e) { return d; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
+
+/* Image library: built-in packs (files listed in lib/library.json, cached offline) + images saved on the phone (DB 'library'). */
+let BUILTIN = null;
+async function builtinLib() {
+  if (BUILTIN) return BUILTIN;
+  try { const j = await (await fetch('lib/library.json')).json(); BUILTIN = (j.items || []).map(x => ({ ...x, data: 'lib/' + x.file, builtin: true })); }
+  catch (e) { BUILTIN = []; }
+  return BUILTIN;
+}
+async function allLib() { return [...await builtinLib(), ...await DB.all('library')]; }
+const LIB_KINDS = [['avatar', 'Profile photos'], ['wallpaper', 'Wallpapers'], ['chatbg', 'Chat backgrounds'], ['photo', 'Photos']];
 const sortScenes = a => a.sort((x, y) => (x.order || 50) - (y.order || 50) || x.name.localeCompare(y.name));
 function fromPreset(p) {
   const s = JSON.parse(JSON.stringify(p));
@@ -374,7 +392,8 @@ function goScreen(s) { P.screen = s; if (s === 'chat') P.unread = 0; render(); }
 
 function homeHTML() {
   const s = P.scene;
-  const bg = s.wallpaper ? `background-image:url('${s.wallpaper}')` : 'background:radial-gradient(120% 70% at 20% 10%,#ff9a8b 0%,transparent 55%),radial-gradient(110% 70% at 90% 40%,#7f7fd5 0%,transparent 60%),radial-gradient(120% 80% at 30% 100%,#1fa2ff 0%,transparent 60%),#2b2d6e';
+  const hw = s.homeWallpaper || s.wallpaper;
+  const bg = hw ? `background-image:url('${hw}')` : 'background:radial-gradient(120% 70% at 20% 10%,#ff9a8b 0%,transparent 55%),radial-gradient(110% 70% at 90% 40%,#7f7fd5 0%,transparent 60%),radial-gradient(120% 80% at 30% 100%,#1fa2ff 0%,transparent 60%),#2b2d6e';
   const app = (name, bgc, ic, extra = '', id = '') => `<div class="h-app" ${id ? `id="${id}"` : ''}><div class="h-ic" style="background:${bgc}">${ic}${extra}</div>${name ? esc(name) : ''}</div>`;
   const badge = P.unread ? `<span class="badge">${P.unread}</span>` : '';
   const dow = (P.date.split(' ')[0] || 'Monday');
@@ -546,9 +565,16 @@ function bankHTML(ev) {
   const tx = String(ev.tx || '').split('\n').map(l => l.trim()).filter(Boolean).map(l => { const [d, desc, amt] = l.split('|').map(x => (x || '').trim()); return `<div class="bk-row"><span>${esc(desc)}<small>${esc(d)}</small></span><span class="${/^-/.test(amt) ? 'neg' : ''}">${esc(amt)}</span></div>`; }).join('');
   return `<div class="scr bank"><div class="bk-top" style="padding-top:${STANDALONE ? 14 : 10}px"><div class="bk-name">${esc(ev.bank || 'Bank')}<span style="opacity:.8;font-weight:500;font-size:14px">Accounts</span></div>
     <div class="bk-acc">${esc(ev.account || '')}</div><div class="bk-lbl">Available balance</div><div class="bk-bal">${esc(ev.balance || '')}</div><div class="bk-num">${esc(ev.number || '')}</div></div>
-    <div class="bk-actions">${['Pay', 'Transfer', 'Buy', 'Statements'].map(a => `<div class="bk-a"><i></i>${a}</div>`).join('')}</div>
+    <div class="bk-actions">${BANK_BTNS.map(([a, f]) => `<div class="bk-a"><i><img src="lib/ui/bank-${f}.png" onerror="this.replaceWith(document.createRange().createContextualFragment(BANK_SVG['${f}']))"></i>${a}</div>`).join('')}</div>
     ${tx ? `<div class="bk-tx"><h4>Recent transactions</h4>${tx}</div>` : ''}</div>`;
 }
+const BANK_BTNS = [['Pay', 'pay'], ['Transfer', 'transfer'], ['Buy', 'buy'], ['Statements', 'statements'], ['Cards', 'cards'], ['Scan to pay', 'scan'], ['Airtime', 'airtime'], ['Settings', 'settings']];
+const BANK_SVG = {
+  pay: '<svg viewBox="0 0 24 24"><path d="M3 11.5 21 3l-6.5 18-3.2-7.3z"/><path d="M11.3 13.7 21 3"/></svg>',
+  transfer: '<svg viewBox="0 0 24 24"><path d="M4 8h14l-3.5-3.5M20 16H6l3.5 3.5"/></svg>',
+  buy: '<svg viewBox="0 0 24 24"><path d="M5 8h14l-1.2 12H6.2z"/><path d="M9 8V6.5a3 3 0 0 1 6 0V8"/></svg>',
+  statements: '<svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h6"/></svg>'
+};
 function topColor(url) {
   return new Promise(res => {
     if (!url) return res('#1f2a3a');
@@ -620,15 +646,54 @@ async function shrink(file, max = 1170) {
   const url = await readURL(file);
   return new Promise(res => { const im = new Image(); im.onload = () => { const k = Math.min(1, max / Math.max(im.width, im.height)); const c = document.createElement('canvas'); c.width = Math.round(im.width * k); c.height = Math.round(im.height * k); c.getContext('2d').drawImage(im, 0, 0, c.width, c.height); res(c.toDataURL('image/jpeg', 0.86)); }; im.onerror = () => res(url); im.src = url; });
 }
-function fImg(o, k, text) {
+function fImg(o, k, text, kind = 'photo') {
   const wrap = el('div', { class: 'row' });
   const draw = () => {
     wrap.innerHTML = '';
-    wrap.append(o[k] ? el('img', { class: 'thumb', src: o[k] }) : el('span', { class: 'thumb' }),
-      el('button', { class: 'btn small', onclick: async e => { e.preventDefault(); const f = await pick('image/*'); if (!f) return; o[k] = await shrink(f); save(); draw(); } }, o[k] ? 'Change' : 'Choose photo'),
+    wrap.append(o[k] ? el('img', { class: 'thumb' + (kind === 'wallpaper' || kind === 'chatbg' ? ' tall' : ''), src: o[k] }) : el('span', { class: 'thumb' + (kind === 'wallpaper' || kind === 'chatbg' ? ' tall' : '') }),
+      el('button', { class: 'btn small primary', onclick: e => { e.preventDefault(); openLibrary(kind, src => { o[k] = src; save(); draw(); }); } }, 'Library'),
+      el('button', { class: 'btn small', onclick: async e => { e.preventDefault(); const f = await pick('image/*'); if (!f) return; o[k] = await shrink(f); save(); draw(); } }, 'Camera roll'),
       o[k] ? el('button', { class: 'btn small', onclick: e => { e.preventDefault(); o[k] = ''; save(); draw(); } }, 'Remove') : null);
   };
   draw(); return el('div', { class: 'f' }, el('span', {}, text), wrap);
+}
+
+/* Library sheet: pick an image (or manage the library when onPick is null). */
+async function openLibrary(kind, onPick) {
+  let curKind = kind || 'avatar', curGroup = 'All';
+  const sheet = el('div', { class: 'sheet' }); const box = el('div', { class: 'sheet-box' }); sheet.append(box);
+  const close = () => sheet.remove();
+  sheet.addEventListener('click', e => { if (e.target === sheet) close(); });
+  document.body.append(sheet);
+  const draw = async () => {
+    const items = await allLib();
+    const groups = ['All', ...new Set(items.map(x => x.group || 'General'))];
+    const shown = items.filter(x => x.kind === curKind && (curGroup === 'All' || (x.group || 'General') === curGroup));
+    box.innerHTML = '';
+    box.append(el('div', { class: 'sheet-head' }, el('b', {}, onPick ? 'Choose from library' : 'Image library'), el('button', { class: 'btn small', onclick: close }, 'Done')));
+    box.append(el('div', { class: 'chips' }, ...LIB_KINDS.map(([k, t]) => el('button', { class: 'chip' + (k === curKind ? ' on' : ''), onclick: () => { curKind = k; draw(); } }, t))));
+    box.append(el('div', { class: 'chips' }, ...groups.map(g => el('button', { class: 'chip small' + (g === curGroup ? ' on' : ''), onclick: () => { curGroup = g; draw(); } }, g))));
+    const grid = el('div', { class: 'lib-grid' + (curKind === 'wallpaper' || curKind === 'chatbg' ? ' tall' : '') });
+    shown.forEach(x => {
+      const cell = el('div', { class: 'lib-cell' }, el('img', { src: x.data, loading: 'lazy' }), el('span', {}, x.name || ''));
+      cell.addEventListener('click', async () => {
+        if (onPick) { onPick(x.data); close(); return; }
+        if (x.builtin) return alert('Built-in image (comes with the app).');
+        if (confirm(`Remove "${x.name}" from the library?`)) { await DB.del(x.id, 'library'); draw(); }
+      });
+      grid.append(cell);
+    });
+    if (!shown.length) grid.append(el('p', { class: 'muted' }, 'Nothing here yet. Add one from the camera roll.'));
+    box.append(grid);
+    box.append(el('div', { class: 'row', style: 'margin-top:10px' },
+      el('button', { class: 'btn primary', onclick: async () => {
+        const f = await pick('image/*'); if (!f) return;
+        const name = prompt('Name for this image (e.g. "Thabo")', f.name.replace(/\.[^.]+$/, '')) || 'Image';
+        const g = curGroup === 'All' ? (prompt('Which production is it for?', LS.get('sp-group', 'My scenes')) || 'My scenes') : curGroup;
+        await DB.put({ id: uid(), group: g, kind: curKind, name, data: await shrink(f, curKind === 'avatar' ? 600 : 1300) }, 'library'); draw();
+      } }, '+ Add from camera roll')));
+  };
+  draw();
 }
 function fAudio(o, k, text) {
   const wrap = el('div', { class: 'row' });
@@ -645,46 +710,107 @@ async function renderDirector() {
   D.scenes = sortScenes(await DB.all());
   const m = $('#d-main'); m.innerHTML = '';
   if (D.edit) return renderEditor(m);
-  m.append(el('div', { class: 'card help', html: `<h3>How it works</h3><ul>
-    <li>Build a <b>scene</b>: who the contact is, what is already in the chat, then the <b>cues</b> (messages, ticks, calls).</li>
-    <li>Press <b>Play</b> and hand the phone to the actor. Each cue is <b>auto</b> (after its delay) or <b>waits for your tap</b>.</li>
-    <li><b>Next cue:</b> tap the <b>top-left corner</b> of the screen (invisible).</li>
-    <li><b>Back here:</b> hold the <b>top-right corner</b> for 2 seconds.</li>
-    <li><b>Rehearse</b> = same, but shows the hidden corners and an orange dot when it is waiting for you.</li></ul>` }));
-  D.scenes.forEach(s => {
-    m.append(el('div', { class: 'card scene-item' },
-      el('div', {}, el('div', { class: 't' }, s.name), el('div', { class: 'muted' }, `${(s.events || []).length} cues · starts on ${s.startScreen || 'lock'} · ${s.look === 'exact' ? 'exact look' : 'lookalike'} · ${s.theme}`)),
-      el('div', { class: 'row', style: 'flex-wrap:nowrap' },
-        el('button', { class: 'btn small', onclick: () => { D.edit = s; renderDirector(); } }, 'Edit'),
-        el('button', { class: 'btn small go', onclick: () => startPlay(s, false) }, 'Play'))));
+  const groups = [...new Set(D.scenes.map(groupOf))];
+  let cur = LS.get('sp-group', groups[0] || 'My scenes');
+  if (!groups.includes(cur)) cur = groups[0] || 'My scenes';
+  LS.set('sp-group', cur);
+
+  // production switcher
+  m.append(el('div', { class: 'prod-bar' },
+    el('div', { class: 'chips', style: 'flex:1' }, ...groups.map(g => el('button', { class: 'chip' + (g === cur ? ' on' : ''), onclick: () => { LS.set('sp-group', g); renderDirector(); } }, `${g} (${D.scenes.filter(s => groupOf(s) === g).length})`)),
+      el('button', { class: 'chip add', onclick: newGroup }, '+ Production'))));
+
+  const inGroup = D.scenes.filter(s => groupOf(s) === cur);
+  const card = el('div', { class: 'card' });
+  card.append(el('div', { class: 'ev-head', style: 'margin-bottom:6px' }, el('h3', { style: 'margin:0' }, cur),
+    el('div', { class: 'row', style: 'gap:4px;flex-wrap:nowrap' },
+      el('button', { class: 'btn small', onclick: () => renameGroup(cur) }, 'Rename'),
+      el('button', { class: 'btn small', onclick: () => exportGroup(cur) }, 'Export'),
+      el('button', { class: 'btn small danger', onclick: () => deleteGroup(cur) }, 'Delete'))));
+  if (!inGroup.length) card.append(el('p', { class: 'muted' }, 'No scenes yet. Tap "+ New scene" or Import a scene file.'));
+  inGroup.forEach((s, i) => {
+    card.append(el('div', { class: 'scene-row' },
+      el('div', { class: 'scene-main', onclick: () => { D.edit = s; renderDirector(); } },
+        el('div', { class: 't' }, s.name), el('div', { class: 'muted' }, `${(s.events || []).length} cues · starts on ${s.startScreen || 'lock'} · ${s.contactName || ''}`)),
+      el('div', { class: 'row', style: 'flex-wrap:nowrap;gap:4px' },
+        el('button', { class: 'btn small', title: 'Move up', onclick: () => moveScene(inGroup, i, -1) }, '↑'),
+        el('button', { class: 'btn small go', onclick: () => startPlay(s, false) }, '▶ Play'))));
   });
+  card.append(el('div', { class: 'row', style: 'margin-top:10px' },
+    el('button', { class: 'btn primary', onclick: () => newScene(cur) }, '+ New scene'),
+    el('button', { class: 'btn', onclick: () => importFile(cur) }, 'Import'),
+    el('button', { class: 'btn', onclick: () => openLibrary('avatar', null) }, 'Image library')));
+  m.append(card);
+
+  m.append(el('div', { class: 'card help', html: `<h3>How it works</h3><ul>
+    <li>A <b>production</b> holds its <b>scenes</b>. Each scene has its own contact, chat, photos, wallpapers and <b>cues</b> (messages, ticks, calls, alarms).</li>
+    <li>Press <b>Play</b> and hand the phone to the actor. Each cue is <b>automatic</b> (after its seconds) or <b>waits for your tap</b>.</li>
+    <li><b>Next cue:</b> tap the <b>top-left corner</b> (invisible). <b>Back here:</b> hold the <b>top-right corner</b> for 2 seconds.</li>
+    <li><b>Rehearse</b> shows the hidden corners and an orange dot while it waits for you.</li></ul>` }));
   m.append(el('div', { class: 'card' }, el('div', { class: 'row' },
-    el('button', { class: 'btn primary', onclick: newScene }, '+ New scene'),
-    el('button', { class: 'btn', onclick: exportAll }, 'Export all'),
-    el('button', { class: 'btn', onclick: importFile }, 'Import'),
-    el('button', { class: 'btn', onclick: addPresets }, 'Add starter scenes')),
-    el('p', { class: 'muted', style: 'margin-top:8px' }, 'Scenes are saved on this phone only. Export to keep a backup or to send scenes from the PC to the phone.')));
-  m.append(el('div', { class: 'card help', html: `<h3>Before a take</h3><ul><li>Guided Access on (Settings › Accessibility) so the actor cannot leave the app.</li><li>Airplane mode or Do Not Disturb so no real notifications appear.</li><li>Set the iPhone clock to match the scene (the real clock stays at the top).</li><li>Ringer switch on and volume up if you want the ring on set.</li><li>Auto-Lock: Never, brightness up.</li></ul>` }));
+    el('button', { class: 'btn', onclick: exportAll }, 'Back up everything'),
+    el('button', { class: 'btn', onclick: addPresets }, 'Add demo scene')),
+    el('p', { class: 'muted', style: 'margin-top:8px' }, 'Everything is saved on this phone only. Export a production to back it up or to send it to another phone.')));
+  m.append(el('div', { class: 'card help', html: `<h3>Before a take</h3><ul><li>Guided Access on (Settings › Accessibility) so the actor cannot leave the app.</li><li>Airplane mode or Do Not Disturb so no real notifications appear.</li><li>Set the phone clock to match the scene (the real clock stays at the top).</li><li>Ringer on and volume up if you want the ring on set.</li><li>Auto-Lock: Never, brightness up.</li></ul>` }));
 }
-async function newScene() {
-  const s = { id: uid(), name: 'New scene', order: 20, contactName: 'Contact', status: 'online', theme: 'light', look: 'alike', appName: 'Chats', startScreen: 'chat', lockTime: '10:00', lockDate: 'Saturday 3 April', sound: 'all', liveTyping: false, unreadBack: 0, lockStack: '', history: '-- Today', events: [] };
+async function moveScene(list, i, d) {
+  const j = i + d; if (j < 0 || j >= list.length) return;
+  [list[i], list[j]] = [list[j], list[i]];
+  for (let k = 0; k < list.length; k++) { list[k].order = k + 1; await DB.put(list[k]); }
+  renderDirector();
+}
+async function newGroup() {
+  const g = (prompt('Name of the production (e.g. "My Short Film")') || '').trim(); if (!g) return;
+  LS.set('sp-group', g); await newScene(g);
+}
+async function renameGroup(g) {
+  const n = (prompt('New name for this production', g) || '').trim(); if (!n || n === g) return;
+  for (const s of D.scenes.filter(s => groupOf(s) === g)) { s.group = n; await DB.put(s); }
+  for (const x of (await DB.all('library')).filter(x => x.group === g)) { x.group = n; await DB.put(x, 'library'); }
+  LS.set('sp-group', n); renderDirector();
+}
+async function deleteGroup(g) {
+  const list = D.scenes.filter(s => groupOf(s) === g);
+  if (!confirm(`Delete the production "${g}" and its ${list.length} scene(s) from this phone? This cannot be undone. Export it first if unsure.`)) return;
+  for (const s of list) await DB.del(s.id);
+  LS.set('sp-group', ''); renderDirector();
+}
+async function newScene(group) {
+  const g = group || LS.get('sp-group', 'My scenes');
+  const n = D.scenes.filter(s => groupOf(s) === g).length;
+  const s = { id: uid(), group: g, name: `Scene ${n + 1}`, order: n + 1, contactName: 'Contact', status: 'online', theme: 'light', look: 'alike', appName: 'Chats', startScreen: 'chat', lockTime: '10:00', lockDate: 'Monday 14 June', sound: 'all', liveTyping: false, unreadBack: 0, lockStack: '', history: '-- Today', events: [] };
   await DB.put(s); D.edit = s; renderDirector();
 }
 async function addPresets() { for (const p of window.PRESETS || []) await DB.put(fromPreset(p)); renderDirector(); }
-function exportAll() {
-  const blob = new Blob([JSON.stringify({ app: 'set-phone', version: 1, scenes: D.scenes }, null, 1)], { type: 'application/json' });
-  const a = el('a', { href: URL.createObjectURL(blob), download: `${new Date().toISOString().slice(0, 10)} Set Phone scenes.json` }); document.body.append(a); a.click(); a.remove();
+function download(obj, name) {
+  const blob = new Blob([JSON.stringify(obj, null, 1)], { type: 'application/json' });
+  const a = el('a', { href: URL.createObjectURL(blob), download: name }); document.body.append(a); a.click(); a.remove();
 }
-async function importFile() {
+async function exportGroup(g) {
+  const lib = (await DB.all('library')).filter(x => x.group === g);
+  download({ app: 'set-phone', version: 2, group: g, scenes: D.scenes.filter(s => groupOf(s) === g), library: lib }, `${new Date().toISOString().slice(0, 10)} ${g} - Set Phone.json`);
+}
+async function exportAll() { download({ app: 'set-phone', version: 2, scenes: D.scenes, library: await DB.all('library') }, `${new Date().toISOString().slice(0, 10)} Set Phone backup.json`); }
+async function importFile(curGroup) {
   const f = await pick('.json,application/json'); if (!f) return;
-  try { const j = JSON.parse(await f.text()); const list = j.scenes || (Array.isArray(j) ? j : [j]); for (const s of list) { if (!s.id) s.id = uid(); await DB.put(s); } renderDirector(); alert(`Imported ${list.length} scene(s).`); }
-  catch (e) { alert('That file is not a Set Phone scene file.'); }
+  let j; try { j = JSON.parse(await f.text()); } catch (e) { return alert('That file is not a Set Phone file.'); }
+  const list = j.scenes || (Array.isArray(j) ? j : [j]);
+  const fileGroup = j.group || list.find(s => s.group)?.group;
+  const g = (prompt('Import into which production?', fileGroup || curGroup || 'My scenes') || '').trim(); if (!g) return;
+  await importData(j, list, g);
+}
+async function importData(j, list, g) {
+  // same id = update that scene (re-importing a pack refreshes it instead of duplicating)
+  for (const s of list) { if (!s.id) s.id = uid(); s.group = g; s.events = (s.events || []).map(e => ({ id: e.id || uid(), ...e })); await DB.put(s); }
+  for (const x of j.library || []) { await DB.put({ ...x, id: x.id || uid(), group: g }, 'library'); }
+  LS.set('sp-group', g); renderDirector();
+  alert(`Imported ${list.length} scene(s)${(j.library || []).length ? ` and ${j.library.length} image(s)` : ''} into "${g}".`);
 }
 
 function renderEditor(m) {
   const s = D.edit;
   const top = el('div', { class: 'row', style: 'margin:6px 0 2px' },
-    el('button', { class: 'btn small', onclick: () => { DB.put(s); D.edit = null; renderDirector(); } }, '‹ All scenes'),
+    el('button', { class: 'btn small', onclick: () => { DB.put(s); D.edit = null; renderDirector(); } }, `‹ ${groupOf(s)}`),
     el('span', { style: 'flex:1' }),
     el('button', { class: 'btn small', onclick: async () => { const c = JSON.parse(JSON.stringify(s)); c.id = uid(); c.name += ' (copy)'; await DB.put(c); D.edit = c; renderDirector(); } }, 'Duplicate'),
     el('button', { class: 'btn small danger', onclick: async () => { if (!confirm(`Delete "${s.name}"? This cannot be undone (export first if unsure).`)) return; await DB.del(s.id); D.edit = null; renderDirector(); } }, 'Delete'));
@@ -692,15 +818,17 @@ function renderEditor(m) {
   if (s.note) m.append(el('div', { class: 'card muted' }, s.note));
   m.append(el('div', { class: 'card' }, el('h3', {}, 'Scene'),
     lab('Scene name', fText(s, 'name')),
+    lab('Production', fSel(s, 'group', [...new Set([groupOf(s), ...D.scenes.map(groupOf)])].map(g => [g, g]), () => LS.set('sp-group', s.group))),
     el('div', { class: 'grid2' }, lab('Contact name', fText(s, 'contactName')), lab('Header status', fText(s, 'status', 'online'))),
-    fImg(s, 'contactPhoto', 'Contact photo'),
+    fImg(s, 'contactPhoto', 'Contact profile photo', 'avatar'),
     el('div', { class: 'grid2' },
       lab('Look', fSel(s, 'look', [['alike', 'Lookalike (broadcast safe)'], ['exact', 'Exact WhatsApp-style']], () => { if (s.look === 'exact' && (!s.appName || s.appName === 'Chats')) s.appName = 'WhatsApp'; if (s.look === 'alike' && s.appName === 'WhatsApp') s.appName = 'Chats'; save(); renderDirector(); })),
       lab('Theme', fSel(s, 'theme', [['light', 'Light'], ['dark', 'Dark']]))),
     el('div', { class: 'grid2' }, lab('App name on notifications', fText(s, 'appName')), lab('Starts on', fSel(s, 'startScreen', [['lock', 'Lock screen'], ['home', 'Home screen'], ['chat', 'Chat']]))),
     el('div', { class: 'grid2' }, lab('Lock-screen time', fText(s, 'lockTime', '10:42')), lab('Lock-screen date', fText(s, 'lockDate', 'Saturday 3 April'))),
-    fImg(s, 'wallpaper', 'Wallpaper (lock + home screen)'),
-    fImg(s, 'chatWallpaper', 'Chat background (optional)'),
+    fImg(s, 'wallpaper', 'Lock screen wallpaper', 'wallpaper'),
+    fImg(s, 'homeWallpaper', 'Home screen wallpaper (empty = same as lock screen)', 'wallpaper'),
+    fImg(s, 'chatWallpaper', 'Chat background (optional)', 'chatbg'),
     el('div', { class: 'grid2' }, lab('Sounds', fSel(s, 'sound', [['all', 'All sounds'], ['calls', 'Only ring + alarm'], ['none', 'Silent (add in post)']])), lab('Unread number on back button', fNum(s, 'unreadBack', 0))),
     fCheck(s, 'liveTyping', 'Actor can type their own messages freely (live typing)'),
     lab('Chat already on screen (one per line: "< text | 10:41" in, "> text | 10:42 | 3" out with ticks, "-- Today" date chip, "! note")', fArea(s, 'history')),
@@ -727,7 +855,7 @@ function renderEditor(m) {
         if (kind === 'num') { if (ev[k] == null) ev[k] = extra; card.append(lab(label, fNum(ev, k, extra))); }
         if (kind === 'sel') card.append(lab(label, fSel(ev, k, extra)));
         if (kind === 'check') card.append(fCheck(ev, k, label));
-        if (kind === 'img') card.append(fImg(ev, k, label));
+        if (kind === 'img') card.append(fImg(ev, k, label, k === 'photo' ? 'avatar' : 'photo'));
         if (kind === 'audio') card.append(fAudio(ev, k, label));
       });
       evWrap.append(card);
