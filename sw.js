@@ -1,6 +1,6 @@
 // Offline cache: the app works in airplane mode once opened online one time.
 // Bump VERSION after every change so phones pick up the new files.
-const VERSION = 'setphone-v4';
+const VERSION = 'setphone-v5';
 const FILES = ['./', './index.html', './styles.css', './app.js', './presets.js', './manifest.json',
   './icon-180.png', './icon-192.png', './icon-512.png',
   './ring.wav', './alarm.wav', './ringback.wav', './in.wav', './notif.wav', './sent.wav', './end.wav', './buzz.wav', './lib/library.json'];
