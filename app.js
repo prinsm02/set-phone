@@ -1,7 +1,8 @@
 'use strict';
 /* Set Phone: scripted phone prop for film sets.
    Director mode = build scenes. Play mode = what the camera sees.
-   Hidden controls in Play mode: tap top-left corner = next cue; hold top-right corner 2 s = back to Director. */
+   Hidden controls in Play mode: tap top-left corner = next cue;
+   pinch in (two fingers squeezed together in the middle) or hold top-right corner 2 s = back to Director. */
 
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -208,18 +209,37 @@ async function startPlay(scene, rehearse) {
   st.style.setProperty('--stagetop', STANDALONE ? 'env(safe-area-inset-top)' : '0px');
   P.wallTop = await topColor(scene.wallpaper);
   render();
+  keepAwake(true);
   try {
     const evs = scene.events || [];
     for (let i = 0; i < evs.length; i++) {
       const ev = evs[i];
       if (ev.trigger === 'tap') await waitTap(tok);
       if (+ev.delay > 0) await sleep(+ev.delay * 1000, tok);
-      await exec(ev, tok);
+      // One broken cue (missing photo, odd value) must never stop the rest of the take.
+      try { await exec(ev, tok); } catch (e) { if (e instanceof Stop) throw e; console.error('cue', i + 1, e); }
     }
   } catch (e) { if (!(e instanceof Stop)) console.error(e); }
 }
+
+/* Keep the screen on while playing (Screen Wake Lock; iOS 16.4+, home-screen apps from iOS 18.4). */
+let wake = null, wantWake = false;
+async function keepAwake(on) {
+  wantWake = on;
+  try {
+    if (on && !wake && navigator.wakeLock) { wake = await navigator.wakeLock.request('screen'); wake.addEventListener('release', () => { wake = null; }); }
+    if (!on && wake) { await wake.release(); wake = null; }
+  } catch (e) { wake = null; }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && wantWake) keepAwake(true);
+  if (document.visibilityState === 'hidden') flushSave();
+});
+window.addEventListener('pagehide', () => flushSave());
 function releaseWaiters() { ['waitTap', 'skipSleep', 'block'].forEach(k => { const f = P[k]; P[k] = null; if (f) f('stop'); }); flashCue(false); }
 function stopPlay() {
+  if ($('#stage').hidden) return;
+  keepAwake(false);
   P.token++; releaseWaiters(); stopRing(); hush(); if (extAudio) extAudio.pause();
   if (P.call?.timer) clearInterval(P.call.timer);
   P.call = null; P.ov = null;
@@ -591,6 +611,26 @@ function topColor(url) {
   const ex = $('#exitZone');
   ex.addEventListener('pointerdown', e => { e.preventDefault(); t = setTimeout(stopPlay, 2000); });
   ['pointerup', 'pointercancel', 'pointerleave'].forEach(k => ex.addEventListener(k, () => clearTimeout(t)));
+
+  // Pinch in (two fingers that start apart and squeeze together near the middle) = back to Director.
+  // Actors don't pinch a chat by accident, and it works anywhere on screen, unlike the tiny corner.
+  const stage = $('#stage'); let pin = null;
+  const dist = (a, b) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+  stage.addEventListener('touchstart', e => {
+    if (e.touches.length !== 2) { pin = null; return; }
+    const [a, b] = e.touches, d = dist(a, b);
+    const mx = (a.clientX + b.clientX) / 2, my = (a.clientY + b.clientY) / 2;
+    const central = Math.abs(mx - innerWidth / 2) < innerWidth * 0.3 && Math.abs(my - innerHeight / 2) < innerHeight * 0.3;
+    pin = d > 90 && central ? { d0: d } : null;
+  }, { passive: true });
+  stage.addEventListener('touchmove', e => {
+    if (e.touches.length === 2) e.preventDefault(); // no page zoom on set
+    if (!pin || e.touches.length !== 2) return;
+    if (dist(e.touches[0], e.touches[1]) < pin.d0 * 0.5) { pin = null; stopPlay(); }
+  }, { passive: false });
+  stage.addEventListener('touchend', () => { pin = null; });
+  // iOS Safari ignores user-scalable=no: block its pinch-zoom and double-tap zoom so the prop never zooms on camera.
+  ['gesturestart', 'gesturechange'].forEach(k => document.addEventListener(k, e => e.preventDefault()));
   $('#banner').addEventListener('click', () => { const app = $('#banner').dataset.app; hideBanner(); if (app === 'chat') goScreen('chat'); });
   document.addEventListener('keydown', e => {
     if ($('#stage').hidden || e.target.id === 'cInput') return;
@@ -633,7 +673,8 @@ function el(tag, attrs = {}, ...kids) {
   kids.flat().forEach(k => k != null && e.append(k));
   return e;
 }
-function save() { clearTimeout(D.saveT); const s = D.edit; D.saveT = setTimeout(() => DB.put(s), 350); }
+function save() { clearTimeout(D.saveT); const s = D.edit; D.saveT = setTimeout(() => { D.saveT = null; DB.put(s); }, 350); }
+function flushSave() { if (D.saveT && D.edit) { clearTimeout(D.saveT); D.saveT = null; return DB.put(D.edit); } return Promise.resolve(); }
 function lab(text, input) { return el('label', { class: 'f' }, el('span', {}, text), input); }
 function fText(o, k, ph) { const i = el('input', { type: 'text', placeholder: ph || '' }); i.value = o[k] ?? ''; i.oninput = () => { o[k] = i.value; save(); }; return i; }
 function fNum(o, k, def) { const i = el('input', { type: 'number', step: 'any', inputmode: 'decimal' }); i.value = o[k] ?? def ?? 0; i.oninput = () => { o[k] = i.value === '' ? 0 : +i.value; save(); }; return i; }
@@ -653,7 +694,7 @@ function fImg(o, k, text, kind = 'photo') {
     wrap.append(o[k] ? el('img', { class: 'thumb' + (kind === 'wallpaper' || kind === 'chatbg' ? ' tall' : ''), src: o[k] }) : el('span', { class: 'thumb' + (kind === 'wallpaper' || kind === 'chatbg' ? ' tall' : '') }),
       el('button', { class: 'btn small primary', onclick: e => { e.preventDefault(); openLibrary(kind, src => { o[k] = src; save(); draw(); }); } }, 'Library'),
       el('button', { class: 'btn small', onclick: async e => { e.preventDefault(); const f = await pick('image/*'); if (!f) return; o[k] = await shrink(f); save(); draw(); } }, 'Camera roll'),
-      o[k] ? el('button', { class: 'btn small', onclick: e => { e.preventDefault(); o[k] = ''; save(); draw(); } }, 'Remove') : null);
+      o[k] ? el('button', { class: 'btn small', onclick: e => { e.preventDefault(); o[k] = ''; save(); draw(); } }, 'Remove') : '');
   };
   draw(); return el('div', { class: 'f' }, el('span', {}, text), wrap);
 }
@@ -701,7 +742,7 @@ function fAudio(o, k, text) {
     wrap.innerHTML = '';
     wrap.append(el('span', { class: 'muted' }, o[k] ? 'Audio added' : 'None'),
       el('button', { class: 'btn small', onclick: async e => { e.preventDefault(); const f = await pick('audio/*'); if (!f) return; if (f.size > 8e6) return alert('Keep voice notes under 8 MB.'); o[k] = await readURL(f); save(); draw(); } }, o[k] ? 'Change' : 'Choose audio'),
-      o[k] ? el('button', { class: 'btn small', onclick: e => { e.preventDefault(); o[k] = ''; save(); draw(); } }, 'Remove') : null);
+      o[k] ? el('button', { class: 'btn small', onclick: e => { e.preventDefault(); o[k] = ''; save(); draw(); } }, 'Remove') : '');
   };
   draw(); return el('div', { class: 'f' }, el('span', {}, text), wrap);
 }
@@ -723,10 +764,11 @@ async function renderDirector() {
   const inGroup = D.scenes.filter(s => groupOf(s) === cur);
   const card = el('div', { class: 'card' });
   card.append(el('div', { class: 'ev-head', style: 'margin-bottom:6px' }, el('h3', { style: 'margin:0' }, cur),
-    el('div', { class: 'row', style: 'gap:4px;flex-wrap:nowrap' },
-      el('button', { class: 'btn small', onclick: () => renameGroup(cur) }, 'Rename'),
-      el('button', { class: 'btn small', onclick: () => exportGroup(cur) }, 'Export'),
-      el('button', { class: 'btn small danger', onclick: () => deleteGroup(cur) }, 'Delete'))));
+    el('button', { class: 'btn small', 'aria-label': 'Production options', onclick: () => actionSheet(cur, [
+      ['Rename production', () => renameGroup(cur)],
+      ['Export (back up / send to another phone)', () => exportGroup(cur)],
+      ['Import scenes into it', () => importFile(cur)],
+      ['Delete production', () => deleteGroup(cur), true]]) }, '•••')));
   if (!inGroup.length) card.append(el('p', { class: 'muted' }, 'No scenes yet. Tap "+ New scene" or Import a scene file.'));
   inGroup.forEach((s, i) => {
     card.append(el('div', { class: 'scene-row' },
@@ -737,21 +779,30 @@ async function renderDirector() {
         el('button', { class: 'btn small go', onclick: () => startPlay(s, false) }, '▶ Play'))));
   });
   card.append(el('div', { class: 'row', style: 'margin-top:10px' },
-    el('button', { class: 'btn primary', onclick: () => newScene(cur) }, '+ New scene'),
-    el('button', { class: 'btn', onclick: () => importFile(cur) }, 'Import'),
-    el('button', { class: 'btn', onclick: () => openLibrary('avatar', null) }, 'Image library')));
+    el('button', { class: 'btn primary', onclick: () => newScene(cur) }, '+ New scene')));
   m.append(card);
 
-  m.append(el('div', { class: 'card help', html: `<h3>How it works</h3><ul>
-    <li>A <b>production</b> holds its <b>scenes</b>. Each scene has its own contact, chat, photos, wallpapers and <b>cues</b> (messages, ticks, calls, alarms).</li>
-    <li>Press <b>Play</b> and hand the phone to the actor. Each cue is <b>automatic</b> (after its seconds) or <b>waits for your tap</b>.</li>
-    <li><b>Next cue:</b> tap the <b>top-left corner</b> (invisible). <b>Back here:</b> hold the <b>top-right corner</b> for 2 seconds.</li>
-    <li><b>Rehearse</b> shows the hidden corners and an orange dot while it waits for you.</li></ul>` }));
-  m.append(el('div', { class: 'card' }, el('div', { class: 'row' },
-    el('button', { class: 'btn', onclick: exportAll }, 'Back up everything'),
-    el('button', { class: 'btn', onclick: addPresets }, 'Add demo scene')),
-    el('p', { class: 'muted', style: 'margin-top:8px' }, 'Everything is saved on this phone only. Export a production to back it up or to send it to another phone.')));
-  m.append(el('div', { class: 'card help', html: `<h3>Before a take</h3><ul><li>Guided Access on (Settings › Accessibility) so the actor cannot leave the app.</li><li>Airplane mode or Do Not Disturb so no real notifications appear.</li><li>Set the phone clock to match the scene (the real clock stays at the top).</li><li>Ringer on and volume up if you want the ring on set.</li><li>Auto-Lock: Never, brightness up.</li></ul>` }));
+  m.append(el('div', { class: 'card help', html: `<h3>On set</h3><ul>
+    <li><b>Play</b>, hand the phone over.</li>
+    <li><b>Next cue:</b> tap the top-left corner.</li>
+    <li><b>Back here:</b> pinch in with two fingers in the middle (or hold the top-right corner 2 s).</li></ul>` }));
+  if (!DB.db) m.append(el('div', { class: 'card warn' }, 'This browser is not saving: scenes vanish when the app closes. Open Set Phone from the Home Screen icon in Safari (not a private tab).'));
+  m.append(el('details', { class: 'card help' }, el('summary', {}, 'More: library, backup, checklist'),
+    el('div', { class: 'row', style: 'margin:8px 0' },
+      el('button', { class: 'btn', onclick: () => openLibrary('avatar', null) }, 'Image library'),
+      el('button', { class: 'btn', onclick: exportAll }, 'Back up everything'),
+      el('button', { class: 'btn', onclick: addPresets }, 'Add demo scene')),
+    el('p', { class: 'muted' }, 'Everything is saved on this phone only. Export a production to back it up or send it to another phone.'),
+    el('div', { html: `<h3 style="margin-top:10px">Before a take</h3><ul><li>Guided Access on (Settings › Accessibility) so the actor cannot leave the app.</li><li>Airplane mode or Do Not Disturb.</li><li>Phone clock set to the scene time.</li><li>Ringer on, volume up (or scene set to Silent).</li><li>Brightness up. The app keeps the screen awake while playing.</li><li><b>Rehearse</b> shows the hidden corners and an orange dot while a cue waits for you.</li></ul>` })));
+}
+/* Small bottom sheet of actions: items = [label, fn, danger?] */
+function actionSheet(title, items) {
+  const sheet = el('div', { class: 'sheet' }); const box = el('div', { class: 'sheet-box' }); sheet.append(box);
+  const close = () => sheet.remove();
+  sheet.addEventListener('click', e => { if (e.target === sheet) close(); });
+  box.append(el('div', { class: 'sheet-head' }, el('b', {}, title), el('button', { class: 'btn small', onclick: close }, 'Cancel')));
+  items.forEach(([t, fn, danger]) => box.append(el('button', { class: 'btn' + (danger ? ' danger' : ''), style: 'display:block;width:100%;margin-top:8px;text-align:left', onclick: () => { close(); fn(); } }, t)));
+  document.body.append(sheet);
 }
 async function moveScene(list, i, d) {
   const j = i + d; if (j < 0 || j >= list.length) return;
@@ -816,23 +867,25 @@ function renderEditor(m) {
     el('button', { class: 'btn small danger', onclick: async () => { if (!confirm(`Delete "${s.name}"? This cannot be undone (export first if unsure).`)) return; await DB.del(s.id); D.edit = null; renderDirector(); } }, 'Delete'));
   m.append(top);
   if (s.note) m.append(el('div', { class: 'card muted' }, s.note));
+  // Essentials first; everything else folds away under "More options".
   m.append(el('div', { class: 'card' }, el('h3', {}, 'Scene'),
     lab('Scene name', fText(s, 'name')),
-    lab('Production', fSel(s, 'group', [...new Set([groupOf(s), ...D.scenes.map(groupOf)])].map(g => [g, g]), () => LS.set('sp-group', s.group))),
-    el('div', { class: 'grid2' }, lab('Contact name', fText(s, 'contactName')), lab('Header status', fText(s, 'status', 'online'))),
+    el('div', { class: 'grid2' }, lab('Contact name', fText(s, 'contactName')), lab('Starts on', fSel(s, 'startScreen', [['lock', 'Lock screen'], ['home', 'Home screen'], ['chat', 'Chat']]))),
     fImg(s, 'contactPhoto', 'Contact profile photo', 'avatar'),
-    el('div', { class: 'grid2' },
-      lab('Look', fSel(s, 'look', [['alike', 'Lookalike (broadcast safe)'], ['exact', 'Exact WhatsApp-style']], () => { if (s.look === 'exact' && (!s.appName || s.appName === 'Chats')) s.appName = 'WhatsApp'; if (s.look === 'alike' && s.appName === 'WhatsApp') s.appName = 'Chats'; save(); renderDirector(); })),
-      lab('Theme', fSel(s, 'theme', [['light', 'Light'], ['dark', 'Dark']]))),
-    el('div', { class: 'grid2' }, lab('App name on notifications', fText(s, 'appName')), lab('Starts on', fSel(s, 'startScreen', [['lock', 'Lock screen'], ['home', 'Home screen'], ['chat', 'Chat']]))),
-    el('div', { class: 'grid2' }, lab('Lock-screen time', fText(s, 'lockTime', '10:42')), lab('Lock-screen date', fText(s, 'lockDate', 'Saturday 3 April'))),
-    fImg(s, 'wallpaper', 'Lock screen wallpaper', 'wallpaper'),
-    fImg(s, 'homeWallpaper', 'Home screen wallpaper (empty = same as lock screen)', 'wallpaper'),
-    fImg(s, 'chatWallpaper', 'Chat background (optional)', 'chatbg'),
-    el('div', { class: 'grid2' }, lab('Sounds', fSel(s, 'sound', [['all', 'All sounds'], ['calls', 'Only ring + alarm'], ['none', 'Silent (add in post)']])), lab('Unread number on back button', fNum(s, 'unreadBack', 0))),
-    fCheck(s, 'liveTyping', 'Actor can type their own messages freely (live typing)'),
+    el('div', { class: 'grid2' }, lab('Phone time', fText(s, 'lockTime', '10:42')), lab('Date', fText(s, 'lockDate', 'Saturday 3 April'))),
     lab('Chat already on screen (one per line: "< text | 10:41" in, "> text | 10:42 | 3" out with ticks, "-- Today" date chip, "! note")', fArea(s, 'history')),
-    lab('Lock-screen notifications already there (one per line: app | title | text | time; app = chat, messages, phone, bank, mail)', fArea(s, 'lockStack'))));
+    el('details', { class: 'more' }, el('summary', {}, 'More options (look, wallpapers, sounds, notifications)'),
+      lab('Production', fSel(s, 'group', [...new Set([groupOf(s), ...D.scenes.map(groupOf)])].map(g => [g, g]), () => LS.set('sp-group', s.group))),
+      el('div', { class: 'grid2' },
+        lab('Look', fSel(s, 'look', [['alike', 'Lookalike (broadcast safe)'], ['exact', 'Exact WhatsApp-style']], () => { if (s.look === 'exact' && (!s.appName || s.appName === 'Chats')) s.appName = 'WhatsApp'; if (s.look === 'alike' && s.appName === 'WhatsApp') s.appName = 'Chats'; save(); renderDirector(); })),
+        lab('Theme', fSel(s, 'theme', [['light', 'Light'], ['dark', 'Dark']]))),
+      el('div', { class: 'grid2' }, lab('Header status', fText(s, 'status', 'online')), lab('App name on notifications', fText(s, 'appName'))),
+      fImg(s, 'wallpaper', 'Lock screen wallpaper', 'wallpaper'),
+      fImg(s, 'homeWallpaper', 'Home screen wallpaper (empty = same as lock screen)', 'wallpaper'),
+      fImg(s, 'chatWallpaper', 'Chat background (optional)', 'chatbg'),
+      el('div', { class: 'grid2' }, lab('Sounds', fSel(s, 'sound', [['all', 'All sounds'], ['calls', 'Only ring + alarm'], ['none', 'Silent (add in post)']])), lab('Unread number on back button', fNum(s, 'unreadBack', 0))),
+      fCheck(s, 'liveTyping', 'Actor can type their own messages freely (live typing)'),
+      lab('Lock-screen notifications already there (one per line: app | title | text | time; app = chat, messages, phone, bank, mail)', fArea(s, 'lockStack')))));
 
   const evWrap = el('div');
   const drawEvents = () => {
@@ -862,19 +915,25 @@ function renderEditor(m) {
     });
   };
   drawEvents();
-  const typeSel = el('select'); Object.entries(TYPES).forEach(([k, v]) => typeSel.append(el('option', { value: k }, v.l)));
+  const typeSel = el('select');
+  const CUE_GROUPS = [['Chat', ['msg_in', 'msg_out', 'voice_in', 'voice_out', 'photo_in', 'photo_out', 'typing', 'ticks', 'status']],
+    ['Calls and alarms', ['call_in', 'call_out', 'call_end', 'missed', 'alarm']],
+    ['Phone screens', ['banner', 'goto', 'clock', 'bank', 'image']], ['Other', ['wait']]];
+  CUE_GROUPS.forEach(([g, keys]) => typeSel.append(el('optgroup', { label: g }, ...keys.filter(k => TYPES[k]).map(k => el('option', { value: k }, TYPES[k].l)))));
   m.append(el('div', { class: 'card' }, el('h3', {}, 'Cues (in order)'), el('p', { class: 'muted' }, 'Orange = waits for your hidden tap. Blue = runs by itself after its seconds.')));
   m.append(evWrap);
   m.append(el('div', { class: 'card' }, el('div', { class: 'row' }, typeSel,
     el('button', { class: 'btn primary', onclick: () => { s.events = s.events || []; s.events.push({ id: uid(), type: typeSel.value, trigger: 'tap', delay: 0 }); save(); drawEvents(); evWrap.lastChild?.scrollIntoView({ behavior: 'smooth' }); } }, '+ Add cue'))));
   m.append(el('div', { class: 'sticky-bar' },
-    el('button', { class: 'btn', onclick: () => { DB.put(s); startPlay(s, true); } }, 'Rehearse'),
-    el('button', { class: 'btn go', onclick: () => { DB.put(s); startPlay(s, false); } }, '▶ Play')));
+    el('button', { class: 'btn', onclick: async () => { clearTimeout(D.saveT); D.saveT = null; await DB.put(s); startPlay(s, true); } }, 'Rehearse'),
+    el('button', { class: 'btn go', onclick: async () => { clearTimeout(D.saveT); D.saveT = null; await DB.put(s); startPlay(s, false); } }, '▶ Play')));
 }
 
 /* ================= BOOT ================= */
 (async () => {
   await DB.open();
+  // Ask iOS/Android not to clear our stored scenes and photos when space runs low.
+  try { if (navigator.storage?.persist && !(await navigator.storage.persisted())) await navigator.storage.persist(); } catch (e) {}
   if (!(await DB.all()).length) for (const p of window.PRESETS || []) await DB.put(fromPreset(p));
   renderDirector();
   const local = /^(localhost|127\.0\.0\.1)$/.test(location.hostname) && !/sw/.test(location.search); // no offline cache while testing on the PC
