@@ -299,3 +299,12 @@ input,textarea,select{font:inherit}
   #stage { left: 50%; right: auto; width: min(430px, calc(var(--app-h, 100vh) * 0.4615)); transform: translateX(-50%); box-shadow: 0 0 0 1px #222, 0 30px 80px rgba(0,0,0,.6); }
   #director { padding-top: 10px; }
 }
+
+/* v7: folded sections, warning card, no zoom on the stage */
+details.more{margin-top:10px;border-top:1px solid #e5e5ea;padding-top:8px}
+details summary{cursor:pointer;font-weight:600;color:#007aff;font-size:14px;padding:4px 0;list-style:none}
+details summary::-webkit-details-marker{display:none}
+details summary::before{content:'▸ '}
+details[open] summary::before{content:'▾ '}
+.card.warn{background:#fff4e5;color:#8a4b00;font-size:14px}
+#stage{touch-action:pan-y}
