@@ -207,6 +207,7 @@ async function startPlay(scene, rehearse) {
   document.documentElement.style.setProperty('--safeb', STANDALONE ? 'env(safe-area-inset-bottom)' : '30px');
   st.style.setProperty('--top', STANDALONE ? '0px' : '47px');
   st.style.setProperty('--stagetop', STANDALONE ? 'env(safe-area-inset-top)' : '0px');
+  if (scene.device === 'laptop') laptopStart(scene);
   P.wallTop = await topColor(scene.wallpaper);
   render();
   keepAwake(true);
@@ -243,7 +244,8 @@ function stopPlay() {
   P.token++; releaseWaiters(); stopRing(); hush(); if (extAudio) extAudio.pause();
   if (P.call?.timer) clearInterval(P.call.timer);
   P.call = null; P.ov = null;
-  $('#stage').hidden = true; $('#director').hidden = false;
+  $('#stage').hidden = true; $('#director').hidden = false; $('#stage').classList.remove('laptop');
+  try { if (document.fullscreenElement || document.webkitFullscreenElement) (document.exitFullscreen || document.webkitExitFullscreen).call(document); } catch (e) {}
   document.activeElement?.blur?.();
   setTheme('#f2f2f7');
   renderDirector();
@@ -252,6 +254,7 @@ function stopPlay() {
 /* ================= EVENTS ================= */
 async function exec(ev, tok) {
   const s = P.scene;
+  if (s.device === 'laptop' && laptopExec(ev)) return;
   switch (ev.type) {
     case 'msg_in': case 'voice_in': case 'photo_in': {
       P.typing = false;
@@ -376,6 +379,7 @@ function chrome(sbText, sbBg, overlay, homeBar) {
 }
 function render() {
   const sc = $('#screen');
+  if (P.scene?.device === 'laptop') { sc.innerHTML = laptopHTML(); bindLaptop(); setTheme('#000'); return; }
   if (P.ov?.type === 'call') { sc.innerHTML = callHTML(); bindCall(); chrome('#fff', '#1b1d22', true); return; }
   if (P.ov?.type === 'alarm') { sc.innerHTML = alarmHTML(); bindAlarm(); chrome('#fff', P.wallTop, true); return; }
   if (P.ov?.type === 'bank') { sc.innerHTML = bankHTML(P.ov.ev); chrome('#fff', '#0b3d5c', false, '#000'); return; }
@@ -664,7 +668,11 @@ const TYPES = {
   image: { l: 'Full-screen picture', f: [['image', 'img', 'Picture']] },
   clock: { l: 'Change lock-screen clock', f: [['time', 'text', 'Time', '11:00'], ['date', 'text', 'Date']] },
   goto: { l: 'Go to screen', f: [['screen', 'sel', 'Screen', [['chat', 'Chat'], ['lock', 'Lock screen'], ['home', 'Home screen']]]] },
-  wait: { l: 'Cue point only (does nothing)', f: [] }
+  wait: { l: 'Cue point only (does nothing)', f: [] },
+  mail_in: { l: 'Laptop: new email arrives', f: [['from', 'text', 'From (name)'], ['address', 'text', 'From (email address)'], ['subject', 'text', 'Subject'], ['body', 'area', 'Body (// = new paragraph)'], ['time', 'text', 'Time shown', '10:59'], ['important', 'check', 'Mark Important'], ['notify', 'sel', 'Pop-up in the corner', [['true', 'Yes, with ding'], ['', 'No pop-up']]]] },
+  mail_open: { l: 'Laptop: open an email', f: [['subject', 'text', 'Subject or sender (any part of it)']] },
+  mail_highlight: { l: 'Laptop: highlight words (cursor selects them)', f: [['text', 'area', 'Exact words to highlight in the open email']] },
+  mail_inbox: { l: 'Laptop: back to the inbox', f: [] }
 };
 
 function el(tag, attrs = {}, ...kids) {
@@ -773,7 +781,7 @@ async function renderDirector() {
   inGroup.forEach((s, i) => {
     card.append(el('div', { class: 'scene-row' },
       el('div', { class: 'scene-main', onclick: () => { D.edit = s; renderDirector(); } },
-        el('div', { class: 't' }, s.name), el('div', { class: 'muted' }, `${(s.events || []).length} cues · starts on ${s.startScreen || 'lock'} · ${s.contactName || ''}`)),
+        el('div', { class: 't' }, s.name), el('div', { class: 'muted' }, s.device === 'laptop' ? `${(s.events || []).length} cues · laptop · We Mail` : `${(s.events || []).length} cues · starts on ${s.startScreen || 'lock'} · ${s.contactName || ''}`)),
       el('div', { class: 'row', style: 'flex-wrap:nowrap;gap:4px' },
         el('button', { class: 'btn small', title: 'Move up', onclick: () => moveScene(inGroup, i, -1) }, '↑'),
         el('button', { class: 'btn small go', onclick: () => startPlay(s, false) }, '▶ Play'))));
@@ -867,9 +875,25 @@ function renderEditor(m) {
     el('button', { class: 'btn small danger', onclick: async () => { if (!confirm(`Delete "${s.name}"? This cannot be undone (export first if unsure).`)) return; await DB.del(s.id); D.edit = null; renderDirector(); } }, 'Delete'));
   m.append(top);
   if (s.note) m.append(el('div', { class: 'card muted' }, s.note));
+  if (s.device === 'laptop') { m.append(el('div', { class: 'card' }, el('h3', {}, 'Laptop scene (We Mail)'),
+    lab('Scene name', fText(s, 'name')),
+    lab('Device', fSel(s, 'device', [['laptop', 'Laptop (Mac desktop + We Mail)'], ['phone', 'Phone']], () => renderDirector())),
+    el('div', { class: 'grid2' }, lab('Her name', fText(s, 'mailUser')), lab('Her email address', fText(s, 'mailAddress'))),
+    el('div', { class: 'grid2' }, lab('Menu bar time', fText(s, 'lockTime', '10:59')), lab('Date', fText(s, 'lockDate', 'Sunday 4 April'))),
+    lab('Email open when Play starts (part of its subject, empty = inbox)', fText(s, 'openFirst')),
+    lab('Inbox, one email per line: Name <address> | Subject | Body (// = new paragraph) | Date shown | flags (u unread, s starred, i important)', fArea(s, 'inbox')),
+    fImg(s, 'contactPhoto', 'Her profile picture (top right)', 'avatar'),
+    fImg(s, 'wallpaper', 'Desktop wallpaper', 'wallpaper'),
+    fImg(s, 'companyLogo', 'Company logo (shown for senders from her company)', 'avatar'),
+    el('details', { class: 'more' }, el('summary', {}, 'More options'),
+      lab('Production', fSel(s, 'group', [...new Set([groupOf(s), ...D.scenes.map(groupOf)])].map(g => [g, g]), () => LS.set('sp-group', s.group))),
+      lab('Labels in the side bar (comma separated)', fText(s, 'mailLabels', 'Work, Clients, Family')),
+      lab('Sounds', fSel(s, 'sound', [['all', 'All sounds'], ['none', 'Silent (add in post)']])))));
+  } else {
   // Essentials first; everything else folds away under "More options".
   m.append(el('div', { class: 'card' }, el('h3', {}, 'Scene'),
     lab('Scene name', fText(s, 'name')),
+    lab('Device', fSel(s, 'device', [['phone', 'Phone'], ['laptop', 'Laptop (Mac desktop + We Mail)']], () => { if (s.device === 'laptop' && !s.inbox) s.inbox = 'HR <hr@company.co.za> | Welcome | Hello // Regards | Thu 1 Apr | u'; save(); renderDirector(); })),
     el('div', { class: 'grid2' }, lab('Contact name', fText(s, 'contactName')), lab('Starts on', fSel(s, 'startScreen', [['lock', 'Lock screen'], ['home', 'Home screen'], ['chat', 'Chat']]))),
     fImg(s, 'contactPhoto', 'Contact profile photo', 'avatar'),
     el('div', { class: 'grid2' }, lab('Phone time', fText(s, 'lockTime', '10:42')), lab('Date', fText(s, 'lockDate', 'Saturday 3 April'))),
@@ -886,6 +910,7 @@ function renderEditor(m) {
       el('div', { class: 'grid2' }, lab('Sounds', fSel(s, 'sound', [['all', 'All sounds'], ['calls', 'Only ring + alarm'], ['none', 'Silent (add in post)']])), lab('Unread number on back button', fNum(s, 'unreadBack', 0))),
       fCheck(s, 'liveTyping', 'Actor can type their own messages freely (live typing)'),
       lab('Lock-screen notifications already there (one per line: app | title | text | time; app = chat, messages, phone, bank, mail)', fArea(s, 'lockStack')))));
+  }
 
   const evWrap = el('div');
   const drawEvents = () => {
@@ -918,7 +943,7 @@ function renderEditor(m) {
   const typeSel = el('select');
   const CUE_GROUPS = [['Chat', ['msg_in', 'msg_out', 'voice_in', 'voice_out', 'photo_in', 'photo_out', 'typing', 'ticks', 'status']],
     ['Calls and alarms', ['call_in', 'call_out', 'call_end', 'missed', 'alarm']],
-    ['Phone screens', ['banner', 'goto', 'clock', 'bank', 'image']], ['Other', ['wait']]];
+    ['Phone screens', ['banner', 'goto', 'clock', 'bank', 'image']], ['Laptop (We Mail)', ['mail_in', 'mail_open', 'mail_highlight', 'mail_inbox', 'clock']], ['Other', ['wait']]];
   CUE_GROUPS.forEach(([g, keys]) => typeSel.append(el('optgroup', { label: g }, ...keys.filter(k => TYPES[k]).map(k => el('option', { value: k }, TYPES[k].l)))));
   m.append(el('div', { class: 'card' }, el('h3', {}, 'Cues (in order)'), el('p', { class: 'muted' }, 'Orange = waits for your hidden tap. Blue = runs by itself after its seconds.')));
   m.append(evWrap);
